@@ -19,16 +19,25 @@ const {
   for (const category of categories) {
     console.log(`📂 Категория: ${category.name}`);
     const seenLinks = new Set();
-    let pageNum = 1;
 
-    while (true) {
+    const firstUrl = `${category.category_url}?page=1`;
+    await page.goto(firstUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const maxPage = await getTotalPages(page);
+    console.log(`🔢 Всего страниц: ${maxPage}`);
+
+    for (let pageNum = 1; pageNum <= maxPage; pageNum++) {
       const url = `${category.category_url}?page=${pageNum}`;
       console.log(`🌍 Страница: ${url}`);
 
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForSelector('.styles_productCard__Qy_9h', { timeout: 30000 });
-        await autoScroll(page);
+
+        const delayTime = randomInt(8000, 20000);
+        console.log(`⏱ Ожидание перед загрузкой товаров: ${delayTime} мс`);
+        await delay(delayTime);
+        await page.waitForSelector('.styles_productCard__Qy_9h', { timeout: 15000 });
+        await scrollUntilNoNewItems(page, '.styles_productCard__Qy_9h');
+        console.log('↕ Прокрутка завершена');
 
         const products = await page.evaluate(() => {
           return Array.from(document.querySelectorAll('.styles_productCard__Qy_9h')).map(card => {
@@ -59,8 +68,7 @@ const {
           }
         }
 
-        pageNum++;
-        await delay(randomInt(2000, 4000));
+        await delay(randomInt(2000, 5000));
       } catch (err) {
         console.error(`❌ Ошибка на странице: ${err.message}`);
         break;
@@ -74,21 +82,23 @@ const {
   console.log("✅ Парсинг завершён.");
 })();
 
-async function autoScroll(page) {
-  await page.evaluate(async () => {
-    await new Promise(resolve => {
-      let totalHeight = 0;
-      const distance = 500;
-      const timer = setInterval(() => {
-        window.scrollBy(0, distance);
-        totalHeight += distance;
-        if (totalHeight >= document.body.scrollHeight - window.innerHeight) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, Math.random() * 1000 + 1000);
-    });
-  });
+async function scrollUntilNoNewItems(page, selector = '.styles_productCard__Qy_9h', pause = 1000, maxRounds = 15) {
+  console.log('↕ Проверка полной загрузки товаров...');
+  let previousCount = 0;
+
+  for (let i = 0; i < maxRounds; i++) {
+    const currentCount = await page.$$eval(selector, els => els.length);
+    if (currentCount === previousCount) {
+      console.log(`✅ Загрузка завершена. Карточек: ${currentCount}`);
+      break;
+    }
+    console.log(`🔄 Карточек было: ${previousCount}, стало: ${currentCount}`);
+    previousCount = currentCount;
+    await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+    await delay(pause);
+  }
+
+  await delay(2000); // финальная пауза
 }
 
 function delay(ms) {
@@ -97,6 +107,16 @@ function delay(ms) {
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function getTotalPages(page) {
+  return await page.evaluate(() => {
+    const paginationItems = Array.from(document.querySelectorAll('ul.styles_pagination__TCaLO a.styles_paginationItem__eSg3p'));
+    const pageNumbers = paginationItems
+      .map(el => parseInt(el.textContent.trim()))
+      .filter(num => !isNaN(num));
+    return pageNumbers.length ? Math.max(...pageNumbers) : 1;
+  });
 }
 
 process.on('unhandledRejection', console.error);
